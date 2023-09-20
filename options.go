@@ -11,7 +11,6 @@ const (
 	callerSkipOffset = 2
 
 	fileMode    = "file"
-	volumeMode  = "volume"
 	consoleMode = "console"
 )
 
@@ -54,14 +53,7 @@ type Option func(o *Options)
 
 type Options struct {
 	// The logging level the Logger should log at. default is `InfoLevel`
-	level      Level
-	mode       string
-	filename   string
-	maxAge     int
-	maxSize    int
-	maxBackups int
-	localTime  bool
-	compress   bool
+	level Level
 	// callerSkip is the number of stack frames to ascend when logging caller info.
 	callerSkip int
 	// namespace is the namespace of logger.
@@ -72,12 +64,26 @@ type Options struct {
 	encoder Encoder
 	// encoderConfig is the encoder config of logger.
 	encoderConfig zapcore.EncoderConfig
+
+	fileOptions
+}
+
+type fileOptions struct {
+	mode       string
+	filename   string
+	maxAge     int
+	maxSize    int
+	maxBackups int
+	localTime  bool
+	compress   bool
 }
 
 func newOptions(opts ...Option) Options {
 	opt := Options{
-		level:      Level(zapcore.InfoLevel),
-		mode:       "console",
+		level: Level(zapcore.InfoLevel),
+		fileOptions: fileOptions{
+			mode: consoleMode,
+		},
 		callerSkip: callerSkipOffset,
 		encoderConfig: zapcore.EncoderConfig{
 			TimeKey:        "ts",
@@ -124,3 +130,94 @@ const (
 	JsonEncoder    Encoder = "json"
 	ConsoleEncoder Encoder = "console"
 )
+
+// WithLevel Setter function to set the logging level.
+func WithLevel(level Level) Option {
+	return func(o *Options) {
+		o.level = level
+	}
+}
+
+// WithMode Setter function to set the logging mode.
+func WithMode(mode string) Option {
+	return func(o *Options) {
+		o.mode = mode
+	}
+}
+
+// WithFilename Setter function to set the log filename.
+func WithFilename(filename string) Option {
+	return func(o *Options) {
+		o.filename = filename
+	}
+}
+
+// WithMaxAge Setter function to set the maximum log age.
+func WithMaxAge(maxAge int) Option {
+	return func(o *Options) {
+		o.maxAge = maxAge
+	}
+}
+
+// WithMaxSize Setter function to set the maximum log size.
+func WithMaxSize(maxSize int) Option {
+	return func(o *Options) {
+		o.maxSize = maxSize
+	}
+}
+
+// WithMaxBackups Setter function to set the maximum number of log backups.
+func WithMaxBackups(maxBackups int) Option {
+	return func(o *Options) {
+		o.maxBackups = maxBackups
+	}
+}
+
+// WithLocalTime Setter function to set the local time option.
+func WithLocalTime(localTime bool) Option {
+	return func(o *Options) {
+		o.localTime = localTime
+	}
+}
+
+// WithCompress Setter function to set the compress option.
+func WithCompress(compress bool) Option {
+	return func(o *Options) {
+		o.compress = compress
+	}
+}
+
+// WithCallerSkip Setter function to set the caller skip value.
+func WithCallerSkip(callerSkip int) Option {
+	return func(o *Options) {
+		o.callerSkip = callerSkip
+	}
+}
+
+// WithNamespace Setter function to set the namespace.
+func WithNamespace(namespace string) Option {
+	return func(o *Options) {
+		o.namespace = namespace
+	}
+}
+
+// Fields Setter function to set the logger fields.
+func Fields(fields map[string]any) Option {
+	return func(o *Options) {
+		o.fields = fields
+	}
+}
+
+// WithEncoder Setter function to set the encoder.
+func WithEncoder(encoder Encoder) Option {
+	return func(o *Options) {
+		o.encoder = encoder
+	}
+}
+
+// WithEncoderConfig Setter function to set the encoder config.
+func WithEncoderConfig(encoderConfig zapcore.EncoderConfig) Option {
+	return func(o *Options) {
+		o.encoderConfig = encoderConfig
+	}
+}

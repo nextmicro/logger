@@ -137,3 +137,21 @@ func TestLoggerWithFields(t *testing.T) {
 
 	// Add more test cases as needed
 }
+
+func TestFilename(t *testing.T) {
+	logger.DefaultLogger = logger.New(
+		logger.WithMode("file"),
+		logger.WithMaxSize(0),
+		logger.WithMaxBackups(0),
+		logger.WithMaxAge(3),
+		logger.WithLocalTime(true),
+		logger.WithCompress(false),
+		logger.WithFilename("./logs/test.log"),
+	)
+
+	defer logger.Sync()
+
+	for i := 0; i < 100000; i++ {
+		logger.Info("test msg")
+	}
+}

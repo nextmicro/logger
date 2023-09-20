@@ -7,7 +7,6 @@ import (
 	"github.com/mattn/go-colorable"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
-	"gopkg.in/natefinch/lumberjack.v2"
 )
 
 var _ Logger = (*Logging)(nil)
@@ -58,8 +57,6 @@ func (l *Logging) build() error {
 	case fileMode:
 		file := l.buildFile()
 		sync = append(sync, zapcore.AddSync(colorable.NewNonColorable(file)))
-	case volumeMode:
-		// TODO: 待实现
 	default:
 		sync = append(sync, zapcore.AddSync(WrappedWriteSyncer{os.Stdout}))
 	}
@@ -85,8 +82,8 @@ func (l *Logging) build() error {
 	return nil
 }
 
-func (l *Logging) buildFile() *lumberjack.Logger {
-	return &lumberjack.Logger{
+func (l *Logging) buildFile() *RollingFile {
+	return &RollingFile{
 		Filename:   l.opt.filename,
 		MaxSize:    l.opt.maxSize,
 		MaxBackups: l.opt.maxBackups,
