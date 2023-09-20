@@ -1,10 +1,10 @@
-package logger
+package logger_test
 
 import (
 	"context"
 	"testing"
 
-	"github.com/go-volo/logger"
+	"github.com/nextmicro/logger"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/jaeger"
 	"go.opentelemetry.io/otel/propagation"
@@ -33,7 +33,7 @@ func TestMain(t *testing.M) {
 }
 
 func TestLogging_WithContext(t *testing.T) {
-	logging := New()
+	logging := logger.New()
 	ctx, span := otel.Tracer("gokit").Start(context.TODO(), "HTTP Client Get /api/get")
 	defer span.End()
 
@@ -45,7 +45,7 @@ func TestLogging_WithContext(t *testing.T) {
 }
 
 func TestLogging_WithFields(t *testing.T) {
-	logging := New()
+	logging := logger.New()
 	logging.WithFields(map[string]interface{}{
 		"age":   22,
 		"order": 100,
@@ -53,16 +53,87 @@ func TestLogging_WithFields(t *testing.T) {
 }
 
 func TestLogging_Debug(t *testing.T) {
-	logging := New()
+	logging := logger.New()
 	logging.WithFields(map[string]interface{}{
 		"age":   22,
 		"order": 100,
 	}).Debug("TestDefault_WithFields")
 
-	logging.SetLevel(DebugLevel)
+	logging.SetLevel(logger.DebugLevel)
 
 	logging.WithFields(map[string]interface{}{
 		"age":   22,
 		"order": 100,
 	}).Debug("TestDefault_WithFields")
+}
+
+func TestLogger(t *testing.T) {
+	// Create a new logger for testing
+	log := logger.New()
+
+	// Test logging at different levels
+	log.Debug("Debug message")
+	log.Info("Info message")
+	log.Warn("Warning message")
+	log.Error("Error message")
+	//log.Fatal("Fatal message")
+
+	// Test formatting
+	log.Debugf("Debug message with format: %s", "formatted")
+	log.Infof("Info message with format: %s", "formatted")
+	log.Warnf("Warning message with format: %s", "formatted")
+	log.Errorf("Error message with format: %s", "formatted")
+	//log.Fatalf("Fatal message with format: %s", "formatted")
+
+	// Test log with fields
+	fields := map[string]interface{}{
+		"user":   "john_doe",
+		"status": "failed",
+	}
+	log.WithFields(fields).Info("User login failed")
+
+	// Test setting log level
+	log.SetLevel(logger.DebugLevel)
+	log.Debug("Debug message should be visible")
+	log.SetLevel(logger.InfoLevel)
+	log.Debug("Debug message should not be visible")
+
+	// Test syncing
+	err := logger.Sync()
+	if err != nil {
+		t.Errorf("Error syncing logger: %v", err)
+	}
+
+	// Add more test cases as needed
+}
+
+func TestLoggerWithContext(t *testing.T) {
+	// Create a context with some values for testing
+	ctx := context.WithValue(context.Background(), "spanId", "123")
+	ctx = context.WithValue(ctx, "traceId", "456")
+
+	// Create a logger with context
+	log := logger.DefaultLogger.WithContext(ctx)
+
+	// Test logging with context-based fields
+	log.Info("Logging with context")
+
+	// Add more test cases as needed
+}
+
+func TestLoggerWithFields(t *testing.T) {
+	// Create a logger with some initial fields
+	fields := map[string]interface{}{
+		"app":     "my_app",
+		"version": "1.0",
+	}
+	logger := logger.DefaultLogger.WithFields(fields)
+
+	// Test logging with additional fields
+	additionalFields := map[string]interface{}{
+		"user": "alice",
+	}
+	logger.WithFields(additionalFields).Info("Additional fields")
+
+	// Add more test cases as needed
 }

@@ -67,7 +67,7 @@ type Options struct {
 	// namespace is the namespace of logger.
 	namespace string
 	// fields is the fields of logger.
-	fields map[string]interface{}
+	fields map[string]any
 	// encoder is the encoder of logger.
 	encoder Encoder
 	// encoderConfig is the encoder config of logger.
@@ -93,7 +93,7 @@ func newOptions(opts ...Option) Options {
 			EncodeDuration: zapcore.StringDurationEncoder,
 			EncodeName:     zapcore.FullNameEncoder,
 		},
-		fields:  make(map[string]interface{}),
+		fields:  make(map[string]any),
 		encoder: JsonEncoder,
 	}
 

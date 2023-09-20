@@ -1,7 +1,19 @@
 package logger
 
+import (
+	"context"
+)
+
 // Logger is the interface for Logger types
 type Logger interface {
+	// SetLevel set logger level
+	SetLevel(lv Level)
+	// WithContext with context
+	WithContext(ctx context.Context) Logger
+	// WithFields set fields to always be logged
+	WithFields(fields map[string]any) Logger
+	// WithCallDepth  with logger call depth.
+	WithCallDepth(callDepth int) Logger
 	// Debug uses fmt.Sprint to construct and log a message.
 	Debug(args ...interface{})
 	// Info uses fmt.Sprint to construct and log a message.
@@ -40,4 +52,6 @@ type Logger interface {
 	// Fatalw logs a message with some additional context, then calls os.Exit. The
 	// variadic key-value pairs are treated as they are in With.
 	Fatalw(msg string, keysAndValues ...interface{})
+	// Sync logger sync
+	Sync() error
 }

@@ -10,10 +10,31 @@ import (
 	"gopkg.in/natefinch/lumberjack.v2"
 )
 
+var _ Logger = (*Logging)(nil)
+
+// DefaultLogger is default logger.
+var DefaultLogger Logger = New()
+
 type Logging struct {
 	opt         Options
 	atomicLevel zap.AtomicLevel
 	lg          *zap.SugaredLogger
+}
+
+// WrappedWriteSyncer is a helper struct implementing zapcore.WriteSyncer to
+// wrap a standard os.Stdout handle, giving control over the WriteSyncer's
+// Sync() function. Sync() results in an error on Windows in combination with
+// os.Stdout ("sync /dev/stdout: The handle is invalid."). WrappedWriteSyncer
+// simply does nothing when Sync() is called by Zap.
+type WrappedWriteSyncer struct {
+	file *os.File
+}
+
+func (mws WrappedWriteSyncer) Write(p []byte) (n int, err error) {
+	return mws.file.Write(p)
+}
+func (mws WrappedWriteSyncer) Sync() error {
+	return nil
 }
 
 func New(opts ...Option) *Logging {
@@ -40,7 +61,7 @@ func (l *Logging) build() error {
 	case volumeMode:
 		// TODO: 待实现
 	default:
-		sync = append(sync, zapcore.AddSync(os.Stdout))
+		sync = append(sync, zapcore.AddSync(WrappedWriteSyncer{os.Stdout}))
 	}
 
 	var enc zapcore.Encoder
@@ -102,7 +123,7 @@ func (l *Logging) WithContext(ctx context.Context) Logger {
 	return logger
 }
 
-func (l *Logging) WithFields(fields map[string]interface{}) Logger {
+func (l *Logging) WithFields(fields map[string]any) Logger {
 	return &Logging{
 		opt:         l.opt,
 		atomicLevel: l.atomicLevel,
@@ -192,5 +213,89 @@ func (l *Logging) Fatalw(msg string, keysAndValues ...interface{}) {
 }
 
 func (l *Logging) Sync() error {
+	if l.lg == nil {
+		return nil
+	}
+
 	return l.lg.Sync()
+}
+
+// WithContext returns a shallow copy of l with its context changed
+// to ctx. The provided ctx must be non-nil.
+func WithContext(ctx context.Context) Logger {
+	return DefaultLogger.WithContext(ctx)
+}
+
+// WithFields is a helper to create a []interface{} of key-value pairs.
+func WithFields(fields map[string]interface{}) Logger {
+	return DefaultLogger.WithFields(fields)
+}
+
+// SetLevel set logger level
+func SetLevel(lv Level) {
+	DefaultLogger.SetLevel(lv)
+}
+
+func Debug(args ...interface{}) {
+	DefaultLogger.Debug(args...)
+}
+
+func Info(args ...interface{}) {
+	DefaultLogger.Info(args...)
+}
+
+func Warn(args ...interface{}) {
+	DefaultLogger.Warn(args...)
+}
+
+func Error(args ...interface{}) {
+	DefaultLogger.Error(args...)
+}
+
+func Fatal(args ...interface{}) {
+	DefaultLogger.Fatal(args...)
+}
+
+func Debugf(template string, args ...interface{}) {
+	DefaultLogger.Debugf(template, args...)
+}
+
+func Infof(template string, args ...interface{}) {
+	DefaultLogger.Infof(template, args...)
+}
+
+func Warnf(template string, args ...interface{}) {
+	DefaultLogger.Warnf(template, args...)
+}
+
+func Errorf(template string, args ...interface{}) {
+	DefaultLogger.Errorf(template, args...)
+}
+
+func Fatalf(template string, args ...interface{}) {
+	DefaultLogger.Fatalf(template, args...)
+}
+
+func Debugw(msg string, keysAndValues ...interface{}) {
+	DefaultLogger.Debugw(msg, keysAndValues...)
+}
+
+func Infow(msg string, keysAndValues ...interface{}) {
+	DefaultLogger.Infow(msg, keysAndValues...)
+}
+
+func Warnw(msg string, keysAndValues ...interface{}) {
+	DefaultLogger.Warnw(msg, keysAndValues...)
+}
+
+func Errorw(msg string, keysAndValues ...interface{}) {
+	DefaultLogger.Errorw(msg, keysAndValues...)
+}
+
+func Fatalw(msg string, keysAndValues ...interface{}) {
+	DefaultLogger.Fatalw(msg, keysAndValues...)
+}
+
+func Sync() error {
+	return DefaultLogger.Sync()
 }
