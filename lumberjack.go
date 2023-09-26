@@ -27,6 +27,7 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
@@ -39,6 +40,17 @@ const (
 	backupTimeFormat = "2006-01-02T15-04-05.000"
 	compressSuffix   = ".gz"
 	defaultMaxSize   = 100
+)
+
+// RollingFormat is the format of the rolling file
+type RollingFormat string
+
+const (
+	MonthlyRolling  RollingFormat = "200601"
+	DailyRolling                  = "20060102"
+	HourlyRolling                 = "2006010215"
+	MinutelyRolling               = "200601021504"
+	SecondlyRolling               = "20060102150405"
 )
 
 // ensure we always implement io.WriteCloser
@@ -82,6 +94,9 @@ type RollingFile struct {
 	// os.TempDir() if empty.
 	Filename string `json:"filename" yaml:"filename"`
 
+	// Rolling is the format of the rolling file
+	Rolling RollingFormat `json:"rolling" yaml:"rolling"`
+
 	// MaxSize is the maximum size in megabytes of the log file before it gets
 	// rotated. It defaults to 100 megabytes.
 	MaxSize int `json:"maxsize" yaml:"maxsize"`
@@ -107,12 +122,34 @@ type RollingFile struct {
 	// using gzip. The default is not to perform compression.
 	Compress bool `json:"compress" yaml:"compress"`
 
+	fileFrag string
+	fileExt  string
+
 	size int64
 	file *os.File
 	mu   sync.Mutex
 
 	millCh    chan bool
 	startMill sync.Once
+}
+
+// NewRollingFile creates a new RollingFile.
+func NewRollingFile(filename string, rolling RollingFormat, maxSize int, maxAge int, maxBackups int, localTime bool, compress bool) *RollingFile {
+	fileExt := filepath.Ext(filename)
+	if fileExt == "" {
+		fileExt = ".log"
+	}
+
+	return &RollingFile{
+		Filename:   filename,
+		Rolling:    rolling,
+		MaxSize:    maxSize,
+		MaxAge:     maxAge,
+		MaxBackups: maxBackups,
+		LocalTime:  localTime,
+		Compress:   compress,
+		fileExt:    fileExt,
+	}
 }
 
 var (
@@ -149,8 +186,16 @@ func (l *RollingFile) Write(p []byte) (n int, err error) {
 		}
 	}
 
+	now := time.Now()
+	suffix := now.Format(string(l.Rolling))
+	if l.file != nil && suffix != l.fileFrag {
+		if err = l.rotate(); err != nil {
+			return 0, err
+		}
+	}
+
 	if l.size+writeLen > l.max() {
-		if err := l.rotate(); err != nil {
+		if err = l.rotate(); err != nil {
 			return 0, err
 		}
 	}
@@ -168,12 +213,22 @@ func (l *RollingFile) Close() error {
 	return l.close()
 }
 
+func (l *RollingFile) Sync() error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.close()
+}
+
 // close closes the file if it is open.
 func (l *RollingFile) close() error {
 	if l.file == nil {
 		return nil
 	}
-	err := l.file.Close()
+	err := l.file.Sync()
+	if err != nil {
+		slog.Error("sync file error: ", err)
+	}
+	err = l.file.Close()
 	l.file = nil
 	return err
 }
@@ -288,13 +343,87 @@ func (l *RollingFile) openExistingOrNew(writeLen int) error {
 	return nil
 }
 
-// filename generates the name of the logfile from the current time.
 func (l *RollingFile) filename() string {
-	if l.Filename != "" {
-		return l.Filename
+	now := time.Now()
+	suffix := now.Format(string(l.Rolling))
+	l.fileFrag = suffix
+	dir, filename := filepath.Split(l.Filename)
+	tDir := dir
+	tFilename := dir
+	switch l.Rolling {
+	case MonthlyRolling:
+		tDir = fmt.Sprintf(
+			"%s/%04d",
+			dir,
+			now.Year(),
+		)
+		tFilename = fmt.Sprintf(
+			"%s_%02d%s",
+			filename,
+			now.Month(),
+			l.fileExt,
+		)
+	case DailyRolling:
+		tDir = fmt.Sprintf(
+			"%s/%04d%02d",
+			dir,
+			now.Year(),
+			now.Month(),
+		)
+		tFilename = fmt.Sprintf(
+			"%s_%02d%s",
+			filename,
+			now.Day(),
+			l.fileExt,
+		)
+	case HourlyRolling:
+		tDir = fmt.Sprintf(
+			"%s/%04d%02d/%02d",
+			dir,
+			now.Year(),
+			now.Month(),
+			now.Day(),
+		)
+		tFilename = fmt.Sprintf(
+			"%s_%02d%s",
+			filename,
+			now.Hour(),
+			l.fileExt,
+		)
+	case MinutelyRolling:
+		tDir = fmt.Sprintf(
+			"%s/%04d%02d/%02d/%02d",
+			dir,
+			now.Year(),
+			now.Month(),
+			now.Day(),
+			now.Hour(),
+		)
+		tFilename = fmt.Sprintf(
+			"%s_%02d%s",
+			filename,
+			now.Minute(),
+			l.fileExt,
+		)
+	case SecondlyRolling:
+		tDir = fmt.Sprintf(
+			"%s/%04d%02d/%02d/%02d/%02d",
+			dir,
+			now.Year(),
+			now.Month(),
+			now.Day(),
+			now.Hour(),
+			now.Minute(),
+		)
+		tFilename = fmt.Sprintf(
+			"%s_%02d%s",
+			filename,
+			now.Second(),
+			l.fileExt,
+		)
 	}
-	name := filepath.Base(os.Args[0]) + "-lumberjack.log"
-	return filepath.Join(os.TempDir(), name)
+
+	return filepath.Join(tDir, tFilename)
 }
 
 // millRunOnce performs compression and removal of stale log files.
@@ -383,7 +512,7 @@ func (l *RollingFile) millRun() {
 }
 
 // mill performs post-rotation compression and removal of stale log files,
-// starting the mill goroutine if necessary.
+// // starting the mill goroutine if necessary.
 func (l *RollingFile) mill() {
 	l.startMill.Do(func() {
 		l.millCh = make(chan bool, 1)

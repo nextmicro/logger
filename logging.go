@@ -2,6 +2,7 @@ package logger
 
 import (
 	"context"
+	"io"
 	"os"
 
 	"github.com/mattn/go-colorable"
@@ -26,7 +27,7 @@ type Logging struct {
 // os.Stdout ("sync /dev/stdout: The handle is invalid."). WrappedWriteSyncer
 // simply does nothing when Sync() is called by Zap.
 type WrappedWriteSyncer struct {
-	file *os.File
+	file io.Writer
 }
 
 func (mws WrappedWriteSyncer) Write(p []byte) (n int, err error) {
@@ -83,14 +84,15 @@ func (l *Logging) build() error {
 }
 
 func (l *Logging) buildFile() *RollingFile {
-	return &RollingFile{
-		Filename:   l.opt.filename,
-		MaxSize:    l.opt.maxSize,
-		MaxBackups: l.opt.maxBackups,
-		MaxAge:     l.opt.maxAge,
-		LocalTime:  l.opt.localTime,
-		Compress:   l.opt.compress,
-	}
+	return NewRollingFile(
+		l.opt.filename,
+		HourlyRolling,
+		l.opt.maxSize,
+		l.opt.maxBackups,
+		l.opt.maxAge,
+		l.opt.localTime,
+		l.opt.compress,
+	)
 }
 
 func CopyFields(fields map[string]interface{}) []interface{} {
@@ -215,6 +217,11 @@ func (l *Logging) Sync() error {
 	}
 
 	return l.lg.Sync()
+}
+
+// WithCallDepth returns a shallow copy of l with its caller skip
+func WithCallDepth(callDepth int) Logger {
+	return DefaultLogger.WithCallDepth(callDepth)
 }
 
 // WithContext returns a shallow copy of l with its context changed

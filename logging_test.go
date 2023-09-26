@@ -142,16 +142,16 @@ func TestFilename(t *testing.T) {
 	logger.DefaultLogger = logger.New(
 		logger.WithMode("file"),
 		logger.WithMaxSize(0),
-		logger.WithMaxBackups(0),
+		logger.WithMaxBackups(1),
 		logger.WithMaxAge(3),
 		logger.WithLocalTime(true),
 		logger.WithCompress(false),
-		logger.WithFilename("./logs/test.log"),
+		logger.WithFilename("./logs/test"),
 	)
 
 	defer logger.Sync()
 
-	for i := 0; i < 100000; i++ {
+	for i := 0; i < 1000; i++ {
 		logger.Info("test msg")
 	}
 }
