@@ -69,13 +69,22 @@ type Options struct {
 }
 
 type fileOptions struct {
-	mode       string
-	filename   string
-	maxAge     int
-	maxSize    int
+	// mode is the logging mode. default is `consoleMode`
+	mode string
+	// filename is the log filename. default is `""`
+	filename string
+	// maxAge is the maximum number of days to retain old log files based on the
+	maxAge int
+	// maxSize is the maximum size in megabytes of the log file before it gets rotated.
+	maxSize int
+	// maxBackups is the maximum number of old log files to retain.
 	maxBackups int
-	localTime  bool
-	compress   bool
+	// localTime is the time zone to use when displaying timestamps.
+	localTime bool
+	// compress is the compression type for old logs. disabled by default.
+	compress bool
+	// compress is the rolling format for old logs. default is `HourlyRolling`
+	roll RollingFormat
 }
 
 func newOptions(opts ...Option) Options {
@@ -184,6 +193,13 @@ func WithLocalTime(localTime bool) Option {
 func WithCompress(compress bool) Option {
 	return func(o *Options) {
 		o.compress = compress
+	}
+}
+
+// WithRoll Setter function to set the rolling format.
+func WithRoll(roll RollingFormat) Option {
+	return func(o *Options) {
+		o.roll = roll
 	}
 }
 
