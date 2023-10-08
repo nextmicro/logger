@@ -2,6 +2,7 @@ package logger_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/nextmicro/logger"
@@ -147,6 +148,28 @@ func TestFilename(t *testing.T) {
 		logger.WithLocalTime(true),
 		logger.WithCompress(false),
 		logger.WithFilename("./logs/test"),
+	)
+
+	defer logger.Sync()
+
+	for i := 0; i < 1000; i++ {
+		logger.Info("test msg")
+	}
+}
+
+type CustomOutput struct {
+}
+
+func (c *CustomOutput) Write(p []byte) (n int, err error) {
+	fmt.Println(string(p))
+	return 0, nil
+}
+
+// 自定义输出源
+func TestCustomOutput(t *testing.T) {
+	logger.DefaultLogger = logger.New(
+		logger.WithMode("custom"),
+		logger.WithWriter(&CustomOutput{}),
 	)
 
 	defer logger.Sync()

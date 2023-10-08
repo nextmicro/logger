@@ -1,6 +1,8 @@
 package logger
 
 import (
+	"io"
+
 	"go.uber.org/zap/zapcore"
 )
 
@@ -85,6 +87,8 @@ type fileOptions struct {
 	compress bool
 	// compress is the rolling format for old logs. default is `HourlyRolling`
 	roll RollingFormat
+	// writer is the writer of logger.
+	writer io.Writer
 }
 
 func newOptions(opts ...Option) Options {
@@ -235,5 +239,11 @@ func WithEncoder(encoder Encoder) Option {
 func WithEncoderConfig(encoderConfig zapcore.EncoderConfig) Option {
 	return func(o *Options) {
 		o.encoderConfig = encoderConfig
+	}
+}
+
+func WithWriter(w io.Writer) Option {
+	return func(o *Options) {
+		o.writer = w
 	}
 }

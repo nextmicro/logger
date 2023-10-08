@@ -56,10 +56,18 @@ func (l *Logging) build() error {
 
 	switch l.opt.mode {
 	case fileMode:
-		file := l.buildFile()
-		sync = append(sync, zapcore.AddSync(colorable.NewNonColorable(file)))
+		if l.opt.writer != nil {
+			sync = append(sync, zapcore.AddSync(l.opt.writer))
+		} else {
+			file := l.buildFile()
+			sync = append(sync, zapcore.AddSync(colorable.NewNonColorable(file)))
+		}
 	default:
-		sync = append(sync, zapcore.AddSync(WrappedWriteSyncer{os.Stdout}))
+		if l.opt.writer != nil {
+			sync = append(sync, zapcore.AddSync(l.opt.writer))
+		} else {
+			sync = append(sync, zapcore.AddSync(WrappedWriteSyncer{os.Stdout}))
+		}
 	}
 
 	var enc zapcore.Encoder
