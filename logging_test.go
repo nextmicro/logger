@@ -42,7 +42,9 @@ func TestLogging_WithContext(t *testing.T) {
 	t.Logf("trace_id: %s", spanContext.TraceID().String())
 	t.Logf("span_id: %s", spanContext.SpanID().String())
 
-	logging.WithContext(ctx).Info("TestDefault_WithContext")
+	logging.WithContext(ctx).WithFields(map[string]any{
+		"11": 222,
+	}).Info("TestDefault_WithContext")
 }
 
 func TestLogging_WithFields(t *testing.T) {

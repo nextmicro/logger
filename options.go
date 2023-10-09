@@ -10,7 +10,7 @@ const (
 	spanKey  = "span_id"
 	traceKey = "trace_id"
 
-	callerSkipOffset = 2
+	callerSkipOffset = 1
 
 	fileMode    = "file"
 	consoleMode = "console"
