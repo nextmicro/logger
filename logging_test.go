@@ -3,6 +3,7 @@ package logger_test
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/nextmicro/logger"
@@ -42,7 +43,9 @@ func TestLogging_WithContext(t *testing.T) {
 	t.Logf("trace_id: %s", spanContext.TraceID().String())
 	t.Logf("span_id: %s", spanContext.SpanID().String())
 
-	logging.WithContext(ctx).Info("TestDefault_WithContext")
+	logging.WithContext(ctx).WithFields(map[string]any{
+		"11": 222,
+	}).Info("TestDefault_WithContext")
 }
 
 func TestLogging_WithFields(t *testing.T) {
@@ -141,19 +144,17 @@ func TestLoggerWithFields(t *testing.T) {
 
 func TestFilename(t *testing.T) {
 	logger.DefaultLogger = logger.New(
-		logger.WithMode("file"),
-		logger.WithMaxSize(0),
-		logger.WithMaxBackups(1),
-		logger.WithMaxAge(3),
-		logger.WithLocalTime(true),
-		logger.WithCompress(false),
-		logger.WithFilename("./logs/test"),
+		logger.WithLevel(logger.DebugLevel),
+		logger.WithMode(logger.FileMode),
 	)
 
 	defer logger.Sync()
 
-	for i := 0; i < 1000; i++ {
+	for i := 0; i < 100; i++ {
+		logger.Debug("test msg")
 		logger.Info("test msg")
+		logger.Warn("test msg")
+		logger.Error("test msg")
 	}
 }
 
@@ -161,8 +162,14 @@ type CustomOutput struct {
 }
 
 func (c *CustomOutput) Write(p []byte) (n int, err error) {
-	fmt.Println(string(p))
-	return 0, nil
+	msg := strings.Replace(string(p), "\n", "", 1)
+	fmt.Println(msg)
+	return len(p), nil
+}
+
+func (c *CustomOutput) Sync() error {
+	fmt.Println("sync")
+	return nil
 }
 
 // 自定义输出源
@@ -177,4 +184,8 @@ func TestCustomOutput(t *testing.T) {
 	for i := 0; i < 1000; i++ {
 		logger.Info("test msg")
 	}
+}
+
+func TestInfo(t *testing.T) {
+	logger.Info("test msg")
 }

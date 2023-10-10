@@ -10,46 +10,19 @@ const (
 	spanKey  = "span_id"
 	traceKey = "trace_id"
 
-	callerSkipOffset = 2
+	callerSkipOffset = 1
 
-	fileMode    = "file"
-	consoleMode = "console"
+	FileMode    = "file"
+	ConsoleMode = "console"
 )
-
-type Level zapcore.Level
 
 const (
-	// DebugLevel logs are typically voluminous, and are usually disabled in
-	// production.
-	DebugLevel Level = iota - 1
-	// InfoLevel is the default logging priority.
-	InfoLevel
-	// WarnLevel logs are more important than Info, but don't need individual
-	// human review.
-	WarnLevel
-	// ErrorLevel logs are high-priority. If an application is running smoothly,
-	// it shouldn't generate any error-level logs.
-	ErrorLevel
-	// DPanicLevel logs are particularly important errors. In development the
-	// logger panics after writing the message.
-	DPanicLevel
-	// PanicLevel logs a message, then panics.
-	PanicLevel
-	// FatalLevel logs a message, then calls os.Exit(1).
-	FatalLevel
-
-	_minLevel = DebugLevel
-	_maxLevel = FatalLevel
-
-	// InvalidLevel is an invalid value for Level.
-	//
-	// Core implementations may panic if they see messages of this level.
-	InvalidLevel = _maxLevel + 1
+	debugFilename = "debug"
+	infoFilename  = "info"
+	warnFilename  = "warn"
+	errorFilename = "error"
+	fatalFilename = "fatal"
 )
-
-func (l Level) Level() zapcore.Level {
-	return zapcore.Level(l)
-}
 
 type Option func(o *Options)
 
@@ -73,6 +46,8 @@ type Options struct {
 type fileOptions struct {
 	// mode is the logging mode. default is `consoleMode`
 	mode string
+	// basePath is the base path of log file. default is `""`
+	path string
 	// filename is the log filename. default is `""`
 	filename string
 	// maxAge is the maximum number of days to retain old log files based on the
@@ -93,9 +68,10 @@ type fileOptions struct {
 
 func newOptions(opts ...Option) Options {
 	opt := Options{
-		level: Level(zapcore.InfoLevel),
+		level: InfoLevel,
 		fileOptions: fileOptions{
-			mode: consoleMode,
+			mode: ConsoleMode,
+			path: "./logs",
 		},
 		callerSkip: callerSkipOffset,
 		encoderConfig: zapcore.EncoderConfig{
@@ -155,6 +131,13 @@ func WithLevel(level Level) Option {
 func WithMode(mode string) Option {
 	return func(o *Options) {
 		o.mode = mode
+	}
+}
+
+// WithPath Setter function to set the log path.
+func WithPath(path string) Option {
+	return func(o *Options) {
+		o.path = path
 	}
 }
 

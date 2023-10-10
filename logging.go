@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"os"
+	"path"
 
 	"github.com/mattn/go-colorable"
 	"go.uber.org/zap"
@@ -19,6 +20,8 @@ type Logging struct {
 	opt         Options
 	atomicLevel zap.AtomicLevel
 	lg          *zap.SugaredLogger
+
+	_rollingFiles []io.Writer
 }
 
 // WrappedWriteSyncer is a helper struct implementing zapcore.WriteSyncer to
@@ -41,7 +44,7 @@ func New(opts ...Option) *Logging {
 	opt := newOptions(opts...)
 	l := &Logging{
 		opt:         opt,
-		atomicLevel: zap.NewAtomicLevelAt(opt.level.Level()),
+		atomicLevel: zap.NewAtomicLevelAt(opt.level.unmarshalZapLevel()),
 	}
 	if err := l.build(); err != nil {
 		panic(err)
@@ -49,25 +52,78 @@ func New(opts ...Option) *Logging {
 	return l
 }
 
+func (l *Logging) LevelEnablerFunc(level zapcore.Level) LevelEnablerFunc {
+	return func(lvl zapcore.Level) bool {
+		if level == zapcore.FatalLevel {
+			return l.atomicLevel.Level() <= level && lvl >= level
+		}
+		return l.atomicLevel.Level() <= level && lvl == level
+	}
+}
+
 func (l *Logging) build() error {
 	var (
-		sync []zapcore.WriteSyncer
+		cores []zapcore.Core
 	)
 
 	switch l.opt.mode {
-	case fileMode:
+	case FileMode:
+		var _cores []zapcore.Core
 		if l.opt.writer != nil {
-			sync = append(sync, zapcore.AddSync(l.opt.writer))
+			_cores = l.buildCustomWriter()
+		} else if l.opt.filename != "" {
+			_cores = l.buildFile()
 		} else {
-			file := l.buildFile()
-			sync = append(sync, zapcore.AddSync(colorable.NewNonColorable(file)))
+			_cores = l.buildFiles()
+		}
+		if len(_cores) > 0 {
+			cores = append(cores, _cores...)
 		}
 	default:
-		if l.opt.writer != nil {
-			sync = append(sync, zapcore.AddSync(l.opt.writer))
-		} else {
-			sync = append(sync, zapcore.AddSync(WrappedWriteSyncer{os.Stdout}))
+		_cores := l.buildConsole()
+		if len(_cores) > 0 {
+			cores = append(cores, _cores...)
 		}
+	}
+
+	zapLog := zap.New(zapcore.NewTee(cores...), zap.AddCaller(), zap.AddCallerSkip(l.opt.callerSkip)).Sugar()
+	if len(l.opt.fields) > 0 {
+		zapLog = zapLog.With(CopyFields(l.opt.fields)...)
+	}
+	if l.opt.namespace != "" {
+		zapLog = zapLog.With(zap.Namespace(l.opt.namespace))
+	}
+
+	l.lg = zapLog
+	return nil
+}
+
+// buildConsole build console.
+func (l *Logging) buildConsole() []zapcore.Core {
+	var (
+		sync zapcore.WriteSyncer
+		enc  zapcore.Encoder
+	)
+
+	if l.opt.encoder.IsConsole() {
+		enc = zapcore.NewConsoleEncoder(l.opt.encoderConfig)
+	} else {
+		enc = zapcore.NewJSONEncoder(l.opt.encoderConfig)
+	}
+
+	if l.opt.writer != nil {
+		sync = zapcore.AddSync(l.opt.writer)
+	} else {
+		sync = zapcore.AddSync(WrappedWriteSyncer{os.Stdout})
+	}
+	return []zapcore.Core{zapcore.NewCore(enc, sync, l.atomicLevel)}
+}
+
+// buildCustomWriter build custom writer.
+func (l *Logging) buildCustomWriter() []zapcore.Core {
+	syncer := l.opt.writer
+	if syncer == nil {
+		syncer = zapcore.AddSync(WrappedWriteSyncer{os.Stdout})
 	}
 
 	var enc zapcore.Encoder
@@ -77,30 +133,75 @@ func (l *Logging) build() error {
 		enc = zapcore.NewJSONEncoder(l.opt.encoderConfig)
 	}
 
-	zapLog := zap.New(zapcore.NewCore(enc, zapcore.NewMultiWriteSyncer(sync...), l.atomicLevel),
-		zap.AddCaller(), zap.AddCallerSkip(l.opt.callerSkip)).Sugar()
-	if len(l.opt.fields) > 0 {
-		zapLog = zapLog.With(CopyFields(l.opt.fields)...)
-	}
-	if l.opt.namespace != "" {
-		zapLog = zapLog.With(zap.Namespace(l.opt.namespace))
-	}
-
-	l.lg = zapLog
-
-	return nil
+	return []zapcore.Core{zapcore.NewCore(enc, zapcore.AddSync(syncer), l.atomicLevel)}
 }
 
-func (l *Logging) buildFile() *RollingFile {
-	return NewRollingFile(
-		l.opt.filename,
+// buildFile build rolling file.
+func (l *Logging) buildFile() []zapcore.Core {
+	_ = l.Sync()
+	var enc zapcore.Encoder
+	if l.opt.encoder.IsConsole() {
+		enc = zapcore.NewConsoleEncoder(l.opt.encoderConfig)
+	} else {
+		enc = zapcore.NewJSONEncoder(l.opt.encoderConfig)
+	}
+
+	syncerRolling := l.createOutput(path.Join(l.opt.path, l.opt.filename))
+	l._rollingFiles = append(l._rollingFiles, []io.Writer{syncerRolling}...)
+	return []zapcore.Core{zapcore.NewCore(enc, syncerRolling, l.atomicLevel)}
+}
+
+// buildFiles build rolling files.
+func (l *Logging) buildFiles() []zapcore.Core {
+	var (
+		cores = make([]zapcore.Core, 0, 5)
+		syncerRollingDebug, syncerRollingInfo, syncerRollingWarn,
+		syncerRollingError, syncerRollingFatal zapcore.WriteSyncer
+	)
+
+	var enc zapcore.Encoder
+	if l.opt.encoder.IsConsole() {
+		enc = zapcore.NewConsoleEncoder(l.opt.encoderConfig)
+	} else {
+		enc = zapcore.NewJSONEncoder(l.opt.encoderConfig)
+	}
+
+	if err := l.Sync(); err != nil {
+		return nil
+	}
+
+	syncerRollingDebug = l.createOutput(path.Join(l.opt.path, debugFilename))
+
+	syncerRollingInfo = l.createOutput(path.Join(l.opt.path, infoFilename))
+
+	syncerRollingWarn = l.createOutput(path.Join(l.opt.path, warnFilename))
+
+	syncerRollingError = l.createOutput(path.Join(l.opt.path, errorFilename))
+
+	syncerRollingFatal = l.createOutput(path.Join(l.opt.path, fatalFilename))
+
+	cores = append(cores,
+		zapcore.NewCore(enc, syncerRollingDebug, l.LevelEnablerFunc(zap.DebugLevel)),
+		zapcore.NewCore(enc, syncerRollingInfo, l.LevelEnablerFunc(zap.InfoLevel)),
+		zapcore.NewCore(enc, syncerRollingWarn, l.LevelEnablerFunc(zap.WarnLevel)),
+		zapcore.NewCore(enc, syncerRollingError, l.LevelEnablerFunc(zap.ErrorLevel)),
+		zapcore.NewCore(enc, syncerRollingFatal, l.LevelEnablerFunc(zap.FatalLevel)),
+	)
+
+	l._rollingFiles = append(l._rollingFiles, []io.Writer{syncerRollingDebug, syncerRollingInfo, syncerRollingWarn, syncerRollingError, syncerRollingFatal}...)
+	return cores
+}
+
+func (l *Logging) createOutput(filename string) zapcore.WriteSyncer {
+	return zapcore.AddSync(colorable.NewNonColorable(NewRollingFile(
+		filename,
 		HourlyRolling,
 		l.opt.maxSize,
 		l.opt.maxBackups,
 		l.opt.maxAge,
 		l.opt.localTime,
 		l.opt.compress,
-	)
+	)))
 }
 
 func CopyFields(fields map[string]interface{}) []interface{} {
@@ -151,7 +252,8 @@ func (l *Logging) Options() Options {
 }
 
 func (l *Logging) SetLevel(lv Level) {
-	l.atomicLevel.SetLevel(lv.Level())
+	l.opt.level = lv
+	l.atomicLevel.SetLevel(lv.unmarshalZapLevel())
 }
 
 func (l *Logging) Clone() *Logging {
@@ -224,6 +326,13 @@ func (l *Logging) Sync() error {
 		return nil
 	}
 
+	for _, w := range l._rollingFiles {
+		r, ok := w.(*RollingFile)
+		if ok {
+			r.Close()
+		}
+	}
+
 	return l.lg.Sync()
 }
 
@@ -249,63 +358,63 @@ func SetLevel(lv Level) {
 }
 
 func Debug(args ...interface{}) {
-	DefaultLogger.Debug(args...)
+	DefaultLogger.WithCallDepth(callerSkipOffset).Debug(args...)
 }
 
 func Info(args ...interface{}) {
-	DefaultLogger.Info(args...)
+	DefaultLogger.WithCallDepth(callerSkipOffset).Info(args...)
 }
 
 func Warn(args ...interface{}) {
-	DefaultLogger.Warn(args...)
+	DefaultLogger.WithCallDepth(callerSkipOffset).Warn(args...)
 }
 
 func Error(args ...interface{}) {
-	DefaultLogger.Error(args...)
+	DefaultLogger.WithCallDepth(callerSkipOffset).Error(args...)
 }
 
 func Fatal(args ...interface{}) {
-	DefaultLogger.Fatal(args...)
+	DefaultLogger.WithCallDepth(callerSkipOffset).Fatal(args...)
 }
 
 func Debugf(template string, args ...interface{}) {
-	DefaultLogger.Debugf(template, args...)
+	DefaultLogger.WithCallDepth(callerSkipOffset).Debugf(template, args...)
 }
 
 func Infof(template string, args ...interface{}) {
-	DefaultLogger.Infof(template, args...)
+	DefaultLogger.WithCallDepth(callerSkipOffset).Infof(template, args...)
 }
 
 func Warnf(template string, args ...interface{}) {
-	DefaultLogger.Warnf(template, args...)
+	DefaultLogger.WithCallDepth(callerSkipOffset).Warnf(template, args...)
 }
 
 func Errorf(template string, args ...interface{}) {
-	DefaultLogger.Errorf(template, args...)
+	DefaultLogger.WithCallDepth(callerSkipOffset).Errorf(template, args...)
 }
 
 func Fatalf(template string, args ...interface{}) {
-	DefaultLogger.Fatalf(template, args...)
+	DefaultLogger.WithCallDepth(callerSkipOffset).Fatalf(template, args...)
 }
 
 func Debugw(msg string, keysAndValues ...interface{}) {
-	DefaultLogger.Debugw(msg, keysAndValues...)
+	DefaultLogger.WithCallDepth(callerSkipOffset).Debugw(msg, keysAndValues...)
 }
 
 func Infow(msg string, keysAndValues ...interface{}) {
-	DefaultLogger.Infow(msg, keysAndValues...)
+	DefaultLogger.WithCallDepth(callerSkipOffset).Infow(msg, keysAndValues...)
 }
 
 func Warnw(msg string, keysAndValues ...interface{}) {
-	DefaultLogger.Warnw(msg, keysAndValues...)
+	DefaultLogger.WithCallDepth(callerSkipOffset).Warnw(msg, keysAndValues...)
 }
 
 func Errorw(msg string, keysAndValues ...interface{}) {
-	DefaultLogger.Errorw(msg, keysAndValues...)
+	DefaultLogger.WithCallDepth(callerSkipOffset).Errorw(msg, keysAndValues...)
 }
 
 func Fatalw(msg string, keysAndValues ...interface{}) {
-	DefaultLogger.Fatalw(msg, keysAndValues...)
+	DefaultLogger.WithCallDepth(callerSkipOffset).Fatalw(msg, keysAndValues...)
 }
 
 func Sync() error {
