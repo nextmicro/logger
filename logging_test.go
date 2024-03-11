@@ -8,14 +8,14 @@ import (
 
 	"github.com/nextmicro/logger"
 	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/exporters/jaeger"
+	"go.opentelemetry.io/otel/exporters/stdout/stdouttrace"
 	"go.opentelemetry.io/otel/propagation"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/trace"
 )
 
 func TestMain(t *testing.M) {
-	exporter, err := jaeger.New(jaeger.WithCollectorEndpoint())
+	exporter, err := stdouttrace.New()
 	if err != nil {
 		panic(err)
 	}
