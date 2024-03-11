@@ -27,7 +27,7 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
-	"log/slog"
+	"log"
 	"os"
 	"path/filepath"
 	"sort"
@@ -226,7 +226,7 @@ func (l *RollingFile) close() error {
 	}
 	err := l.file.Sync()
 	if err != nil {
-		slog.Error("sync file error: ", err)
+		log.Fatalln("sync file error: ", err)
 	}
 	err = l.file.Close()
 	l.file = nil
