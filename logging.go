@@ -1,12 +1,12 @@
 package logger
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"os"
 	"path"
 
-	"github.com/mattn/go-colorable"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -21,7 +21,7 @@ type Logging struct {
 	atomicLevel zap.AtomicLevel
 	lg          *zap.SugaredLogger
 
-	_rollingFiles []io.Writer
+	_rollingFiles []zapcore.WriteSyncer
 }
 
 // WrappedWriteSyncer is a helper struct implementing zapcore.WriteSyncer to
@@ -38,6 +38,62 @@ func (mws WrappedWriteSyncer) Write(p []byte) (n int, err error) {
 }
 func (mws WrappedWriteSyncer) Sync() error {
 	return nil
+}
+
+// NonColorable holds writer but removes escape sequence.
+type NonColorable struct {
+	out zapcore.WriteSyncer
+}
+
+// NewNonColorable returns new instance of Writer which removes escape sequence from Writer.
+func NewNonColorable(w zapcore.WriteSyncer) io.Writer {
+	return &NonColorable{out: w}
+}
+
+// Write writes data on console
+func (w *NonColorable) Write(data []byte) (n int, err error) {
+	er := bytes.NewReader(data)
+	var plaintext bytes.Buffer
+loop:
+	for {
+		c1, err := er.ReadByte()
+		if err != nil {
+			plaintext.WriteTo(w.out)
+			break loop
+		}
+		if c1 != 0x1b {
+			plaintext.WriteByte(c1)
+			continue
+		}
+		_, err = plaintext.WriteTo(w.out)
+		if err != nil {
+			break loop
+		}
+		c2, err := er.ReadByte()
+		if err != nil {
+			break loop
+		}
+		if c2 != 0x5b {
+			continue
+		}
+
+		for {
+			c, err := er.ReadByte()
+			if err != nil {
+				break loop
+			}
+			if ('a' <= c && c <= 'z') || ('A' <= c && c <= 'Z') || c == '@' {
+				break
+			}
+		}
+	}
+
+	return len(data), nil
+}
+
+// Sync flushes the buffer.
+func (w *NonColorable) Sync() error {
+	return w.out.Sync()
 }
 
 func New(opts ...Option) *Logging {
@@ -147,7 +203,7 @@ func (l *Logging) buildFile() []zapcore.Core {
 	}
 
 	syncerRolling := l.createOutput(path.Join(l.opt.path, l.opt.filename))
-	l._rollingFiles = append(l._rollingFiles, []io.Writer{syncerRolling}...)
+	l._rollingFiles = append(l._rollingFiles, []zapcore.WriteSyncer{syncerRolling}...)
 	return []zapcore.Core{zapcore.NewCore(enc, syncerRolling, l.atomicLevel)}
 }
 
@@ -188,20 +244,25 @@ func (l *Logging) buildFiles() []zapcore.Core {
 		zapcore.NewCore(enc, syncerRollingFatal, l.LevelEnablerFunc(zap.FatalLevel)),
 	)
 
-	l._rollingFiles = append(l._rollingFiles, []io.Writer{syncerRollingDebug, syncerRollingInfo, syncerRollingWarn, syncerRollingError, syncerRollingFatal}...)
+	l._rollingFiles = append(l._rollingFiles, []zapcore.WriteSyncer{syncerRollingDebug, syncerRollingInfo, syncerRollingWarn, syncerRollingError, syncerRollingFatal}...)
 	return cores
 }
 
 func (l *Logging) createOutput(filename string) zapcore.WriteSyncer {
-	return zapcore.AddSync(colorable.NewNonColorable(NewRollingFile(
-		filename,
-		HourlyRolling,
-		l.opt.maxSize,
-		l.opt.maxBackups,
-		l.opt.maxAge,
-		l.opt.localTime,
-		l.opt.compress,
-	)))
+	var rule = DefaultRotateRule(filename, backupFileDelimiter, l.opt.keepDays, l.opt.compress)
+	switch l.opt.rotation {
+	case sizeRotationRule:
+		rule = NewSizeLimitRotateRule(filename, backupFileDelimiter, l.opt.keepDays, l.opt.maxSize, l.opt.maxBackups, l.opt.compress)
+	case hourRotationRule:
+		rule = NewHourRotateRule(filename, backupFileDelimiter, l.opt.keepHours, l.opt.compress)
+	}
+
+	log, err := NewRotateLogger(filename, rule, l.opt.compress)
+	if err != nil {
+		panic(err)
+	}
+
+	return zapcore.AddSync(NewNonColorable(log))
 }
 
 func CopyFields(fields map[string]interface{}) []interface{} {
@@ -321,19 +382,17 @@ func (l *Logging) Fatalw(msg string, keysAndValues ...interface{}) {
 	l.lg.Fatalw(msg, keysAndValues...)
 }
 
-func (l *Logging) Sync() error {
+func (l *Logging) Sync() (err error) {
 	if l.lg == nil {
-		return nil
+		return
 	}
 
 	for _, w := range l._rollingFiles {
-		r, ok := w.(*RollingFile)
-		if ok {
-			r.Close()
-		}
+		err = w.Sync()
 	}
 
-	return l.lg.Sync()
+	err = l.lg.Sync()
+	return
 }
 
 // WithCallDepth returns a shallow copy of l with its caller skip

@@ -17,11 +17,11 @@ const (
 )
 
 const (
-	debugFilename = "debug"
-	infoFilename  = "info"
-	warnFilename  = "warn"
-	errorFilename = "error"
-	fatalFilename = "fatal"
+	debugFilename = "debug.log"
+	infoFilename  = "info.log"
+	warnFilename  = "warn.log"
+	errorFilename = "error.log"
+	fatalFilename = "fatal.log"
 )
 
 type Option func(o *Options)
@@ -40,39 +40,41 @@ type Options struct {
 	// encoderConfig is the encoder config of logger.
 	encoderConfig zapcore.EncoderConfig
 
-	fileOptions
-}
-
-type fileOptions struct {
 	// mode is the logging mode. default is `consoleMode`
 	mode string
-	// basePath is the base path of log file. default is `""`
+	// path represents the log file path, default is `logs`.
 	path string
 	// filename is the log filename. default is `""`
 	filename string
-	// maxAge is the maximum number of days to retain old log files based on the
-	maxAge int
-	// maxSize is the maximum size in megabytes of the log file before it gets rotated.
+	// maxSize represents how much space the writing log file takes up. 0 means no limit. The unit is `MB`.
+	// Only take effect when RotationRuleType is `size`
 	maxSize int
-	// maxBackups is the maximum number of old log files to retain.
+	// keepDays represents how many days the log files will be kept. Default to keep all files.
+	// Only take effect when Mode is `file` or `volume`, both work when Rotation is `daily` or `size`.
+	keepDays int
+	// keepHours represents how many hours the log files will be kept. Default to keep all files.
+	// Only take effect when Mode is `file` or `volume`, both work when Rotation is `daily` or `size`.
+	keepHours int
+	// maxBackups represents how many backup log files will be kept. 0 means all files will be kept forever.
+	// Only take effect when RotationRuleType is `size`.
+	// Even though `MaxBackups` sets 0, log files will still be removed
+	// if the `KeepDays` limitation is reached.
 	maxBackups int
-	// localTime is the time zone to use when displaying timestamps.
-	localTime bool
 	// compress is the compression type for old logs. disabled by default.
 	compress bool
-	// compress is the rolling format for old logs. default is `HourlyRolling`
-	roll RollingFormat
+	// rotation represents the type of log rotation rule. Default is `daily`.
+	// daily: daily rotation.
+	// size: size limited rotation.
+	rotation string
 	// writer is the writer of logger.
 	writer io.Writer
 }
 
 func newOptions(opts ...Option) Options {
 	opt := Options{
-		level: InfoLevel,
-		fileOptions: fileOptions{
-			mode: ConsoleMode,
-			path: "./logs",
-		},
+		level:      InfoLevel,
+		mode:       ConsoleMode,
+		path:       "./logs",
 		callerSkip: callerSkipOffset,
 		encoderConfig: zapcore.EncoderConfig{
 			TimeKey:        "ts",
@@ -148,13 +150,6 @@ func WithFilename(filename string) Option {
 	}
 }
 
-// WithMaxAge Setter function to set the maximum log age.
-func WithMaxAge(maxAge int) Option {
-	return func(o *Options) {
-		o.maxAge = maxAge
-	}
-}
-
 // WithMaxSize Setter function to set the maximum log size.
 func WithMaxSize(maxSize int) Option {
 	return func(o *Options) {
@@ -169,24 +164,10 @@ func WithMaxBackups(maxBackups int) Option {
 	}
 }
 
-// WithLocalTime Setter function to set the local time option.
-func WithLocalTime(localTime bool) Option {
-	return func(o *Options) {
-		o.localTime = localTime
-	}
-}
-
 // WithCompress Setter function to set the compress option.
 func WithCompress(compress bool) Option {
 	return func(o *Options) {
 		o.compress = compress
-	}
-}
-
-// WithRoll Setter function to set the rolling format.
-func WithRoll(roll RollingFormat) Option {
-	return func(o *Options) {
-		o.roll = roll
 	}
 }
 
@@ -222,6 +203,24 @@ func WithEncoder(encoder Encoder) Option {
 func WithEncoderConfig(encoderConfig zapcore.EncoderConfig) Option {
 	return func(o *Options) {
 		o.encoderConfig = encoderConfig
+	}
+}
+
+func WithKeepHours(keepHours int) Option {
+	return func(o *Options) {
+		o.keepHours = keepHours
+	}
+}
+
+func WithKeepDays(keepDays int) Option {
+	return func(o *Options) {
+		o.keepDays = keepDays
+	}
+}
+
+func WithRotation(rotation string) Option {
+	return func(o *Options) {
+		o.rotation = rotation
 	}
 }
 

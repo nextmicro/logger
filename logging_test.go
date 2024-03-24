@@ -144,13 +144,40 @@ func TestLoggerWithFields(t *testing.T) {
 
 func TestFilename(t *testing.T) {
 	logger.DefaultLogger = logger.New(
-		logger.WithLevel(logger.DebugLevel),
+		logger.WithLevel(logger.InfoLevel),
+		logger.WithFilename("stat.log"),
+		logger.WithRotation("hour"),
+		logger.WithNamespace("metrics"),
 		logger.WithMode(logger.FileMode),
+		logger.WithMaxSize(1),
+		logger.WithMaxBackups(3),
+		logger.WithKeepHours(1),
+		logger.WithCompress(false),
+	)
+
+	for i := 0; i < 10000; i++ {
+		logger.WithFields(map[string]interface{}{
+			"a": 123,
+			"v": 1,
+		}).Info("test msg")
+	}
+
+	logger.Sync()
+}
+
+func TestLogs(t *testing.T) {
+	logger.DefaultLogger = logger.New(
+		logger.WithLevel(logger.InfoLevel),
+		logger.WithMode(logger.FileMode),
+		logger.WithMaxSize(1),
+		logger.WithMaxBackups(1),
+		logger.WithCompress(false),
+		logger.WithRotation("size"),
 	)
 
 	defer logger.Sync()
 
-	for i := 0; i < 100; i++ {
+	for i := 0; i < 10000; i++ {
 		logger.Debug("test msg")
 		logger.Info("test msg")
 		logger.Warn("test msg")
