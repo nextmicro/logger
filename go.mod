@@ -3,6 +3,7 @@ module github.com/nextmicro/logger
 go 1.18
 
 require (
+	github.com/smallnest/ringbuffer v0.0.0-20240827114233-62e3c686e6c0
 	github.com/stretchr/testify v1.8.4
 	go.opentelemetry.io/otel v1.24.0
 	go.opentelemetry.io/otel/exporters/stdout/stdouttrace v1.24.0

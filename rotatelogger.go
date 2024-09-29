@@ -10,6 +10,8 @@ import (
 	"runtime/debug"
 	"sync"
 	"time"
+
+	"github.com/smallnest/ringbuffer"
 )
 
 // Placeholder is a placeholder object that can be used globally.
@@ -23,22 +25,21 @@ type (
 )
 
 const (
-	dateFormat          = "2006-01-02"
-	hourFormat          = "2006010215"
-	fileTimeFormat      = time.RFC3339
-	hoursPerDay         = 24
-	bufferSize          = 100
-	defaultDirMode      = 0o755
-	defaultFileMode     = 0o600
-	gzipExt             = ".gz"
-	backupFileDelimiter = "-"
-	sizeRotationRule    = "size"
-	hourRotationRule    = "hour"
-	megaBytes           = 1 << 20
+	dateFormat           = "20060102"
+	hourFormat           = "2006010215"
+	fileTimeFormat       = "20060102150405.000"
+	hoursPerDay          = 24
+	defaultDirMode       = 0o755
+	defaultFileMode      = 0o600
+	gzipExt              = ".gz"
+	backupFileDelimiter  = "-"
+	sizeRotationRule     = "size"
+	hourRotationRule     = "hour"
+	dayRotationRule      = "day"
+	megaBytes            = 1 << 20
+	logPageCacheByteSize = 1 * 1024 * 1024 // 1MB
+	logPageCacheMinSize  = 1024            // 1KB
 )
-
-// ErrLogFileClosed is an error that indicates the log file is already closed.
-var ErrLogFileClosed = errors.New("error: log file closed")
 
 type (
 	// A RotateLogger is a Logger that can rotate log files with given rules.
@@ -46,25 +47,28 @@ type (
 		filename string
 		backup   string
 		fp       *os.File
-		channel  chan []byte
-		done     chan PlaceholderType
-		rule     RotateRule
-		compress bool
+
+		ringBuffer *ringbuffer.RingBuffer
+		done       chan struct{}
+		rule       RotateRule
+		compress   bool
 		// can't use threading.RoutineGroup because of cycle import
 		waitGroup   sync.WaitGroup
 		closeOnce   sync.Once
 		currentSize int64
+
+		mu sync.Mutex
 	}
 )
 
 // NewRotateLogger returns a RotateLogger with given filename and rule, etc.
 func NewRotateLogger(filename string, rule RotateRule, compress bool) (*RotateLogger, error) {
 	l := &RotateLogger{
-		filename: filename,
-		channel:  make(chan []byte, bufferSize),
-		done:     make(chan PlaceholderType),
-		rule:     rule,
-		compress: compress,
+		filename:   filename,
+		rule:       rule,
+		compress:   compress,
+		done:       make(chan struct{}),
+		ringBuffer: ringbuffer.New(logPageCacheByteSize),
 	}
 	if err := l.initialize(); err != nil {
 		return nil, err
@@ -74,14 +78,62 @@ func NewRotateLogger(filename string, rule RotateRule, compress bool) (*RotateLo
 	return l, nil
 }
 
+// flush flushes the buffer to the file.
+func (l *RotateLogger) flush() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.fp == nil || l.ringBuffer.Length() == 0 {
+		return
+	}
+
+	readByte := l.ringBuffer.Bytes(nil)
+	l.ringBuffer.Reset()
+	if _, err := l.write(readByte); err != nil {
+		log.Printf("failed to write to file: %v", err)
+	}
+	return
+}
+
+func (l *RotateLogger) startWorker() {
+	l.waitGroup.Add(1)
+
+	go func() {
+		defer l.waitGroup.Done()
+
+		t := time.NewTicker(time.Millisecond * 500)
+		defer t.Stop()
+		for {
+			select {
+			case <-t.C:
+				l.flush()
+			case <-l.done:
+				l.flush()
+				return
+			}
+		}
+	}()
+}
+
 func (l *RotateLogger) Write(data []byte) (int, error) {
 	select {
-	case l.channel <- data:
-		return len(data), nil
 	case <-l.done:
-		log.Println(string(data))
-		return 0, ErrLogFileClosed
+		return 0, fmt.Errorf("logger is closed")
+	default:
 	}
+
+	l.mu.Lock()
+	if l.ringBuffer.IsFull() || l.ringBuffer.Free() <= logPageCacheMinSize || l.ringBuffer.Length() >= logPageCacheByteSize {
+		l.mu.Unlock()
+		l.flush()
+	} else {
+		l.mu.Unlock()
+	}
+
+	l.mu.Lock()
+	size, err := l.ringBuffer.Write(data)
+	l.mu.Unlock()
+
+	return size, err
 }
 
 func (l *RotateLogger) getBackupFilename() string {
@@ -153,13 +205,11 @@ func (l *RotateLogger) postRotate(file string) {
 	}()
 }
 
+// rotate 日志轮转
 func (l *RotateLogger) rotate() error {
-	if l.fp != nil {
-		err := l.fp.Close()
-		l.fp = nil
-		if err != nil {
-			return err
-		}
+	// close the current file
+	if err := l.close(); err != nil {
+		return err
 	}
 
 	_, err := os.Stat(l.filename)
@@ -178,32 +228,7 @@ func (l *RotateLogger) rotate() error {
 	return err
 }
 
-func (l *RotateLogger) startWorker() {
-	l.waitGroup.Add(1)
-
-	go func() {
-		defer l.waitGroup.Done()
-
-		for {
-			select {
-			case event := <-l.channel:
-				l.write(event)
-			case <-l.done:
-				// avoid losing logs before closing.
-				for {
-					select {
-					case event := <-l.channel:
-						l.write(event)
-					default:
-						return
-					}
-				}
-			}
-		}
-	}()
-}
-
-func (l *RotateLogger) write(v []byte) {
+func (l *RotateLogger) write(v []byte) (int, error) {
 	if l.rule.ShallRotate(l.currentSize + int64(len(v))) {
 		if err := l.rotate(); err != nil {
 			log.Println(err)
@@ -212,10 +237,35 @@ func (l *RotateLogger) write(v []byte) {
 			l.currentSize = 0
 		}
 	}
-	if l.fp != nil {
-		l.fp.Write(v)
-		l.currentSize += int64(len(v))
+	if l.fp == nil {
+		return 0, nil
 	}
+
+	size, err := l.fp.Write(v)
+	if err != nil {
+		return size, err
+	}
+	l.currentSize += int64(size)
+	return size, nil
+}
+
+// close file close the file
+func (l *RotateLogger) close() (err error) {
+	if l.fp == nil {
+		return nil
+	}
+
+	var errs []error
+	if err = l.fp.Sync(); err != nil {
+		errs = append(errs, err)
+	}
+	err = l.fp.Close()
+	if err != nil {
+		errs = append(errs, err)
+	}
+
+	l.fp = nil
+	return errors.Join(errs...)
 }
 
 // Close closes l.
@@ -223,17 +273,17 @@ func (l *RotateLogger) Close() (err error) {
 	l.closeOnce.Do(func() {
 		close(l.done)
 		l.waitGroup.Wait()
-		if err = l.fp.Sync(); err != nil {
-			return
-		}
-		err = l.fp.Close()
+		err = l.close()
 	})
 
 	return err
 }
 
 func (l *RotateLogger) Sync() error {
-	return l.Close()
+	if l.fp != nil {
+		return l.fp.Sync()
+	}
+	return nil
 }
 
 func compressLogFile(file string) {

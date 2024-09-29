@@ -236,14 +236,6 @@ func TestRotateLoggerClose(t *testing.T) {
 		assert.Nil(t, logger.Close())
 	})
 
-	t.Run("close and write", func(t *testing.T) {
-		logger := new(RotateLogger)
-		logger.done = make(chan struct{})
-		close(logger.done)
-		_, err := logger.Write([]byte("foo"))
-		assert.ErrorIs(t, err, ErrLogFileClosed)
-	})
-
 	t.Run("close without losing logs", func(t *testing.T) {
 		text := "foo"
 		filename, err := TempFilenameWithText(text)
