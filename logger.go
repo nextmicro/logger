@@ -79,7 +79,10 @@ func New(core zapcore.Core, options ...Option) *Logger {
 		addStack:    zapcore.FatalLevel + 1,
 		clock:       zapcore.DefaultClock,
 	}
-	return log.WithOptions(options...)
+	log.WithOptions(options...)
+	log.handler = NewCommonHandler(log.handler)
+
+	return log
 }
 
 // NewNop returns a no-op Logger. It never writes out logs or internal errors,

@@ -1,6 +1,7 @@
 package logger
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 func TestNopLogger(t *testing.T) {
@@ -42,4 +44,20 @@ func TestNewExample(t *testing.T) {
 	logger.Info("finished",
 		slog.Int("status", http.StatusOK),
 	)
+}
+
+type CustomHandler struct{}
+
+func (h *CustomHandler) Handle(ctx context.Context, entry *zapcore.CheckedEntry, fields []zapcore.Field) ([]zapcore.Field, error) {
+	v, ok := ctx.Value("tid").(string)
+	if ok {
+		fields = append(fields, zap.String("tid", v))
+	}
+	return fields, nil
+}
+
+func TestHandler(t *testing.T) {
+	logger := NewExample(WithHandler(&CustomHandler{}))
+	ctx := context.WithValue(context.Background(), "tid", "123456")
+	logger.InfoContext(ctx, "hello world")
 }
