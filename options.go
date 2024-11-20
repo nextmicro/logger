@@ -1,231 +1,181 @@
+// Copyright (c) 2016 Uber Technologies, Inc.
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in
+// all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+// THE SOFTWARE.
+
 package logger
 
 import (
-	"io"
+	"fmt"
 
 	"go.uber.org/zap/zapcore"
 )
 
-const (
-	spanKey  = "span_id"
-	traceKey = "trace_id"
-
-	callerSkipOffset = 1
-
-	FileMode    = "file"
-	ConsoleMode = "console"
-)
-
-const (
-	debugFilename = "debug.log"
-	infoFilename  = "info.log"
-	warnFilename  = "warn.log"
-	errorFilename = "error.log"
-	fatalFilename = "fatal.log"
-)
-
-type Option func(o *Options)
-
-type Options struct {
-	// The logging level the Logger should log at. default is `InfoLevel`
-	level Level
-	// callerSkip is the number of stack frames to ascend when logging caller info.
-	callerSkip int
-	// namespace is the namespace of logger.
-	namespace string
-	// fields is the fields of logger.
-	fields map[string]any
-	// encoder is the encoder of logger.
-	encoder Encoder
-	// encoderConfig is the encoder config of logger.
-	encoderConfig zapcore.EncoderConfig
-
-	// mode is the logging mode. default is `consoleMode`
-	mode string
-	// path represents the log file path, default is `logs`.
-	path string
-	// filename is the log filename. default is `""`
-	filename string
-	// maxSize represents how much space the writing log file takes up. 0 means no limit. The unit is `MB`.
-	// Only take effect when RotationRuleType is `size`
-	maxSize int
-	// keepDays represents how many days the log files will be kept. Default to keep all files.
-	// Only take effect when Mode is `file` or `volume`, both work when Rotation is `daily` or `size`.
-	keepDays int
-	// keepHours represents how many hours the log files will be kept. Default to keep all files.
-	// Only take effect when Mode is `file` or `volume`, both work when Rotation is `daily` or `size`.
-	keepHours int
-	// maxBackups represents how many backup log files will be kept. 0 means all files will be kept forever.
-	// Only take effect when RotationRuleType is `size`.
-	// Even though `MaxBackups` sets 0, log files will still be removed
-	// if the `KeepDays` limitation is reached.
-	maxBackups int
-	// compress is the compression type for old logs. disabled by default.
-	compress bool
-	// rotation represents the type of log rotation rule. Default is `daily`.
-	// daily: daily rotation.
-	// size: size limited rotation.
-	rotation string
-	// writer is the writer of logger.
-	writer io.Writer
+// An Option configures a Logger.
+type Option interface {
+	apply(*Logger)
 }
 
-func newOptions(opts ...Option) Options {
-	opt := Options{
-		level:      InfoLevel,
-		mode:       ConsoleMode,
-		path:       "./logs",
-		callerSkip: callerSkipOffset,
-		encoderConfig: zapcore.EncoderConfig{
-			TimeKey:        "ts",
-			MessageKey:     "msg",
-			LevelKey:       "level",
-			CallerKey:      "caller",
-			StacktraceKey:  "stack",
-			LineEnding:     zapcore.DefaultLineEnding,
-			NameKey:        "Logger",
-			EncodeCaller:   zapcore.ShortCallerEncoder,
-			EncodeLevel:    zapcore.LowercaseLevelEncoder,
-			EncodeTime:     zapcore.ISO8601TimeEncoder, // 日期格式改为"ISO8601"，例如："2020-12-16T19:12:48.771+0800"
-			EncodeDuration: zapcore.StringDurationEncoder,
-			EncodeName:     zapcore.FullNameEncoder,
-		},
-		fields:  make(map[string]any),
-		encoder: JsonEncoder,
-	}
+// optionFunc wraps a func so it satisfies the Option interface.
+type optionFunc func(*Logger)
 
-	for _, o := range opts {
-		o(&opt)
-	}
-
-	return opt
+func (f optionFunc) apply(log *Logger) {
+	f(log)
 }
 
-type Encoder string
-
-func (e Encoder) String() string {
-	return string(e)
+// WrapCore wraps or replaces the Logger's underlying zapcore.Core.
+func WrapCore(f func(zapcore.Core) zapcore.Core) Option {
+	return optionFunc(func(log *Logger) {
+		log.core = f(log.core)
+	})
 }
 
-// IsJson Whether json encoder.
-func (e Encoder) IsJson() bool {
-	return e.String() == JsonEncoder.String()
+func WithHandler(h Handler) Option {
+	return optionFunc(func(log *Logger) {
+		log.handler = h
+	})
 }
 
-// IsConsole Whether console encoder.
-func (e Encoder) IsConsole() bool {
-	return e.String() == ConsoleEncoder.String()
+// Hooks registers functions which will be called each time the Logger writes
+// out an Entry. Repeated use of Hooks is additive.
+//
+// Hooks are useful for simple side effects, like capturing metrics for the
+// number of emitted logs. More complex side effects, including anything that
+// requires access to the Entry's structured fields, should be implemented as
+// a zapcore.Core instead. See zapcore.RegisterHooks for details.
+func Hooks(hooks ...func(zapcore.Entry) error) Option {
+	return optionFunc(func(log *Logger) {
+		log.core = zapcore.RegisterHooks(log.core, hooks...)
+	})
 }
 
-const (
-	JsonEncoder    Encoder = "json"
-	ConsoleEncoder Encoder = "console"
-)
-
-// WithLevel Setter function to set the logging level.
-func WithLevel(level Level) Option {
-	return func(o *Options) {
-		o.level = level
-	}
+// Fields adds fields to the Logger.
+func Fields(fs ...zapcore.Field) Option {
+	return optionFunc(func(log *Logger) {
+		log.core = log.core.With(fs)
+	})
 }
 
-// WithMode Setter function to set the logging mode.
-func WithMode(mode string) Option {
-	return func(o *Options) {
-		o.mode = mode
-	}
+// ErrorOutput sets the destination for errors generated by the Logger. Note
+// that this option only affects internal errors; for sample code that sends
+// error-level logs to a different location from info- and debug-level logs,
+// see the package-level AdvancedConfiguration example.
+//
+// The supplied WriteSyncer must be safe for concurrent use. The Open and
+// zapcore.Lock functions are the simplest ways to protect files with a mutex.
+func ErrorOutput(w zapcore.WriteSyncer) Option {
+	return optionFunc(func(log *Logger) {
+		log.errorOutput = w
+	})
 }
 
-// WithPath Setter function to set the log path.
-func WithPath(path string) Option {
-	return func(o *Options) {
-		o.path = path
-	}
+// Development puts the logger in development mode, which makes DPanic-level
+// logs panic instead of simply logging an error.
+func Development() Option {
+	return optionFunc(func(log *Logger) {
+		log.development = true
+	})
 }
 
-// WithFilename Setter function to set the log filename.
-func WithFilename(filename string) Option {
-	return func(o *Options) {
-		o.filename = filename
-	}
+// AddCaller configures the Logger to annotate each message with the filename,
+// line number, and function name of zap's caller. See also WithCaller.
+func AddCaller() Option {
+	return WithCaller(true)
 }
 
-// WithMaxSize Setter function to set the maximum log size.
-func WithMaxSize(maxSize int) Option {
-	return func(o *Options) {
-		o.maxSize = maxSize
-	}
+// WithCaller configures the Logger to annotate each message with the filename,
+// line number, and function name of zap's caller, or not, depending on the
+// value of enabled. This is a generalized form of AddCaller.
+func WithCaller(enabled bool) Option {
+	return optionFunc(func(log *Logger) {
+		log.addCaller = enabled
+	})
 }
 
-// WithMaxBackups Setter function to set the maximum number of log backups.
-func WithMaxBackups(maxBackups int) Option {
-	return func(o *Options) {
-		o.maxBackups = maxBackups
-	}
+// AddCallerSkip increases the number of callers skipped by caller annotation
+// (as enabled by the AddCaller option). When building wrappers around the
+// Logger and SugaredLogger, supplying this Option prevents zap from always
+// reporting the wrapper code as the caller.
+func AddCallerSkip(skip int) Option {
+	return optionFunc(func(log *Logger) {
+		log.callerSkip += skip
+	})
 }
 
-// WithCompress Setter function to set the compress option.
-func WithCompress(compress bool) Option {
-	return func(o *Options) {
-		o.compress = compress
-	}
+// AddStacktrace configures the Logger to record a stack trace for all messages at
+// or above a given level.
+func AddStacktrace(lvl zapcore.LevelEnabler) Option {
+	return optionFunc(func(log *Logger) {
+		log.addStack = lvl
+	})
 }
 
-// WithCallerSkip Setter function to set the caller skip value.
-func WithCallerSkip(callerSkip int) Option {
-	return func(o *Options) {
-		o.callerSkip = callerSkip
-	}
+// IncreaseLevel increase the level of the logger. It has no effect if
+// the passed in level tries to decrease the level of the logger.
+func IncreaseLevel(lvl zapcore.LevelEnabler) Option {
+	return optionFunc(func(log *Logger) {
+		core, err := zapcore.NewIncreaseLevelCore(log.core, lvl)
+		if err != nil {
+			fmt.Fprintf(log.errorOutput, "failed to IncreaseLevel: %v\n", err)
+		} else {
+			log.core = core
+		}
+	})
 }
 
-// WithNamespace Setter function to set the namespace.
-func WithNamespace(namespace string) Option {
-	return func(o *Options) {
-		o.namespace = namespace
-	}
+// WithPanicHook sets a CheckWriteHook to run on Panic/DPanic logs.
+// Zap will call this hook after writing a log statement with a Panic/DPanic level.
+//
+// For example, the following builds a logger that will exit the current
+// goroutine after writing a Panic/DPanic log message, but it will not start a panic.
+//
+//	zap.New(core, zap.WithPanicHook(zapcore.WriteThenGoexit))
+//
+// This is useful for testing Panic/DPanic log output.
+func WithPanicHook(hook zapcore.CheckWriteHook) Option {
+	return optionFunc(func(log *Logger) {
+		log.onPanic = hook
+	})
 }
 
-// Fields Setter function to set the logger fields.
-func Fields(fields map[string]any) Option {
-	return func(o *Options) {
-		o.fields = fields
-	}
+// WithFatalHook sets a CheckWriteHook to run on fatal logs.
+// Zap will call this hook after writing a log statement with a Fatal level.
+//
+// For example, the following builds a logger that will exit the current
+// goroutine after writing a fatal log message, but it will not exit the
+// program.
+//
+//	zap.New(core, zap.WithFatalHook(zapcore.WriteThenGoexit))
+//
+// It is important that the provided CheckWriteHook stops the control flow at
+// the current statement to meet expectations of callers of the logger.
+// We recommend calling os.Exit or runtime.Goexit inside custom hooks at
+// minimum.
+func WithFatalHook(hook zapcore.CheckWriteHook) Option {
+	return optionFunc(func(log *Logger) {
+		log.onFatal = hook
+	})
 }
 
-// WithEncoder Setter function to set the encoder.
-func WithEncoder(encoder Encoder) Option {
-	return func(o *Options) {
-		o.encoder = encoder
-	}
-}
-
-// WithEncoderConfig Setter function to set the encoder config.
-func WithEncoderConfig(encoderConfig zapcore.EncoderConfig) Option {
-	return func(o *Options) {
-		o.encoderConfig = encoderConfig
-	}
-}
-
-func WithKeepHours(keepHours int) Option {
-	return func(o *Options) {
-		o.keepHours = keepHours
-	}
-}
-
-func WithKeepDays(keepDays int) Option {
-	return func(o *Options) {
-		o.keepDays = keepDays
-	}
-}
-
-func WithRotation(rotation string) Option {
-	return func(o *Options) {
-		o.rotation = rotation
-	}
-}
-
-func WithWriter(w io.Writer) Option {
-	return func(o *Options) {
-		o.writer = w
-	}
+// WithClock specifies the clock used by the logger to determine the current
+// time for logged entries. Defaults to the system clock with time.Now.
+func WithClock(clock zapcore.Clock) Option {
+	return optionFunc(func(log *Logger) {
+		log.clock = clock
+	})
 }
